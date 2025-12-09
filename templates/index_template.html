@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>FOF 组合展示</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; background:#fafafa; color:#222; }
+    @media (max-width: 600px) { body { margin: 10px; } }
+    header { margin-bottom: 16px; }
+    .metrics { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+    .metric { padding:10px; border:1px solid #e7e7e7; border-radius:6px; background:#fff; flex: 1 1 140px; }
+    
+    .table-container { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { border-collapse: collapse; width:100%; background:#fff; white-space: nowrap; }
+    table th, table td { padding:8px; border:1px solid #eee; text-align: left; font-size:14px; }
+    
+    .charts { display:flex; flex-direction:column; gap:20px; }
+    .chart-block { padding:12px; border-radius:6px; background:#fff; box-shadow: 0 1px 2px rgba(0,0,0,0.03); overflow: hidden; }
+    .row-charts { display: flex; gap: 20px; }
+    .chart-area { flex: 3; min-width: 0; }
+    .chart-pie { flex: 1; min-width: 0; }
+    @media (max-width: 768px) { .row-charts { flex-direction: column; } }
+    .footer { margin-top: 24px; color:#666; font-size:13px; }
+    a { color:#1a73e8; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+  <!-- echarts will be inlined here -->
+<style>
+    header.page-header { background: linear-gradient(135deg,#7198df,#42a5f5); color:#fff; padding:20px; border-radius:10px; box-shadow:0 12px 30px rgba(15,98,254,.2); }
+    header.page-header h1 { margin:0 0 6px; font-size:28px; letter-spacing:1px; }
+    header.page-header .subtext { font-size:14px; opacity:.9; }
+
+    .metrics { gap:16px; }
+    .metric { border:0; background:linear-gradient(160deg,#ffffff 0%,#f4f7fb 100%); box-shadow:0 10px 25px rgba(15,98,254,.08); transition:transform .2s ease, box-shadow .2s ease; }
+    .metric:hover { transform:translateY(-3px); box-shadow:0 14px 34px rgba(15,98,254,.15); }
+    .metric-label { font-size:13px; letter-spacing:.5px; text-transform:uppercase; color:#6c7a89; margin-bottom:6px; }
+    .metric-value { font-size:22px; font-weight:600; color:#0f62fe; }
+
+    table { border-radius:10px; overflow:hidden; }
+    th { background:#eef4ff; font-size:13px; color:#1b3a57; }
+    tbody tr:nth-child(odd) { background:#fafcff; }
+    tbody tr:hover { background:#e8f0fe; }
+
+    .chart-block { border:1px solid #edf2ff; box-shadow:0 12px 28px rgba(15,98,254,.08); }
+</style>
+
+<script id="echarts-script">
+{{ echarts_js | safe }}
+</script>
+</head>
+<body>
+<header class="page-header">
+<h1>FOF 组合展示</h1>
+<div class="subtext">数据最新日期：{{ latest_date }}</div>
+</header>
+
+<section class="metrics">
+<div class="metric"><div class="metric-label"><strong>起始组合市值</strong></div><div class="metric-value">{{ total_start | round(2) }}</div></div>
+<div class="metric"><div class="metric-label"><strong>当前组合市值</strong></div><div class="metric-value">{{ total_end | round(2) }}</div></div>
+<div class="metric"><div class="metric-label"><strong>总收益</strong></div><div class="metric-value">{{ total_return_pct | round(2) }}%</div></div>
+<div class="metric"><div class="metric-label"><strong>年化收益</strong></div><div class="metric-value">{{ annualized_return_pct | round(2) }}%</div></div>
+<div class="metric"><div class="metric-label"><strong>年化波动率</strong></div><div class="metric-value">{{ annual_vol_pct | round(2) }}%</div></div>
+<div class="metric"><div class="metric-label"><strong>最大回撤</strong></div><div class="metric-value">{{ max_drawdown_pct | round(2) }}%</div></div>
+</section>
+
+<div class="charts">
+<div class="chart-block">
+    <div class="table-card" style="padding:18px 20px;border-radius:14px;background:linear-gradient(145deg,#fdfcff,#f4f7ff);box-shadow:0 12px 28px rgba(15,98,254,.12);"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:20px;color:#133d72;">当前持仓表格</h2>
+      </div>
+      <div class="table-container" style="border:1px solid #e3e9ff;border-radius:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.6);overflow:hidden;">
+        {{ table_html | safe }}
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-block">
+    <h2>组合净值曲线</h2>
+    <div id="{{ portfolio_chart_id }}" style="width:100%;height:700px;"></div>
+  </div>
+
+  <div class="row-charts">
+    <div class="chart-block chart-area">
+      <h2>子基金配置走势图</h2>
+      <div id="{{ area_chart_id }}" style="width:100%;height:420px;"></div>
+    </div>
+
+    <div class="chart-block chart-pie">
+      <h2>当前配置</h2>
+      <div id="{{ pie_chart_id }}" style="width:100%;height:360px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // create charts from options
+  {{ charts_init_js | safe }}
+})();
+</script>
+
+<footer class="footer">
+  页面为单文件静态页面，基金详情链接模板：{{ fund_url_template }}
+</footer>
+</body>
+</html>

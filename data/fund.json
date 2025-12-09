@@ -1,0 +1,40 @@
+{
+    "funds": [
+        {
+            "id": "SAHL94",
+            "name": "世纪前沿红利优选1号",
+            "purchaseDate": "2024-03-08",
+            "purchaseNav": 1.0000,
+            "shares": 2500000,
+            "url": "SAHL94.html",
+            "type": "混合型",
+            "manager": "张三",
+            "company": "某某基金管理有限公司",
+            "nav_data_path": "data/世纪前沿红利优选1号.xlsx"
+        },
+        {
+            "id": "SACU97",
+            "name": "世纪前沿中证2000指数增强1号",
+            "purchaseDate": "2023-10-27",
+            "purchaseNav": 1.0000,
+            "shares": 2500000,
+            "url": "SACU97.html",
+            "type": "股票型",
+            "manager": "李四",
+            "company": "某某基金管理有限公司",
+            "nav_data_path": "data/世纪前沿中证2000指数增强1号.xlsx"
+        },
+        {
+            "id": "B2373B",
+            "name": "世纪前沿金选中证1000指数增强1号B类",
+            "purchaseDate": "2023-07-18",
+            "purchaseNav": 1.0000,
+            "shares": 2500000,
+            "url": "B2373B.html",
+            "type": "债券型",
+            "manager": "王五",
+            "company": "某某基金管理有限公司",
+            "nav_data_path": "data/世纪前沿金选中证1000指数增强1号B类.xlsx"
+        }
+    ]
+}
