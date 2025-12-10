@@ -455,11 +455,11 @@ def generate_table_html(df_holdings, fund_url_template):
             "total_cost": "总成本",
             "nav": "当前净值",
             "current_value": "当前市值",
-            "pnl": "未实现盈亏",
+            "pnl": "持有收益",
         }
     )
     # format
-    for c in ["份额", "成本价", "总成本", "当前净值", "当前市值", "未实现盈亏"]:
+    for c in ["份额", "成本价", "总成本", "当前净值", "当前市值", "持有收益"]:
         df_display[c] = df_display[c].apply(
             lambda x: (
                 f"{x:,.2f}"
