@@ -18,8 +18,10 @@
     .charts { display:flex; flex-direction:column; gap:20px; }
     .chart-block { padding:12px; border-radius:6px; background:#fff; box-shadow: 0 1px 2px rgba(0,0,0,0.03); overflow: hidden; }
     .row-charts { display: flex; gap: 20px; }
+    .chart-interval { flex: 3; min-width: 0; }
+    .chart-corr { flex: 2; min-width: 0; }
     .chart-area { flex: 3; min-width: 0; }
-    .chart-pie { flex: 1; min-width: 0; }
+    .chart-pie { flex: 2; min-width: 0; }
     @media (max-width: 768px) { .row-charts { flex-direction: column; } }
     .footer { margin-top: 24px; color:#666; font-size:13px; }
     a { color:#1a73e8; text-decoration:none; }
@@ -80,6 +82,20 @@
     <h2>组合净值曲线</h2>
     <div id="{{ portfolio_chart_id }}" style="width:100%;height:700px;"></div>
   </div>
+  
+  <div class="row-charts">
+    <div class="chart-block chart-interval">
+      <h2>区间收益</h2>
+      <div class="table-container" style="border:1px solid #e3e9ff;border-radius:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.6);overflow:hidden;">
+        {{ interval_table_html | safe }}
+      </div>
+    </div>
+
+    <div class="chart-block chart-corr">
+      <h2>子基金相关性</h2>
+      <div id="{{ heatmap_chart_id }}" style="width:100%;height:360px;"></div>
+    </div>
+  </div>
 
   <div class="row-charts">
     <div class="chart-block chart-area">
@@ -92,6 +108,8 @@
       <div id="{{ pie_chart_id }}" style="width:100%;height:360px;"></div>
     </div>
   </div>
+
+
 </div>
 
 <script>

@@ -4,8 +4,10 @@ import pandas as pd
 import numpy as np
 from jinja2 import Environment, FileSystemLoader
 from pyecharts.charts import Line, Pie, Grid
+
+# 新增 HeatMap
+from pyecharts.charts import HeatMap
 from pyecharts import options as opts
-from pyecharts.globals import ThemeType
 import textwrap
 
 # optional dependency for download
@@ -22,6 +24,7 @@ DEFAULT_ECHARTS_VERSION = "5.4.2"
 
 import glob
 import json
+from pyecharts.charts import Grid
 
 
 def read_csvs(data_dir):
@@ -576,10 +579,167 @@ def generate_table_html(df_holdings, fund_url_template):
     return html
 
 
+def build_heatmap_chart(corr_df):
+    # 构造热力图数据
+    x_labels = corr_df.columns.tolist()
+    # 为了让对角线从左上到右下，这里将 y 轴顺序反转
+    y_labels = corr_df.index.tolist()[::-1]
+    min_value = corr_df.min().min()
+    max_value = corr_df.max().max()
+    data = []
+    for i, yi in enumerate(y_labels):
+        for j, xj in enumerate(x_labels):
+            val = (
+                float(corr_df.loc[yi, xj]) if not pd.isna(corr_df.loc[yi, xj]) else None
+            )
+            data.append([j, i, round(val, 4) if val is not None else None])
+
+    # 使用 Grid 控制整体布局，压缩图的主体区域，给轴标签留空间
+    heat = HeatMap(init_opts=opts.InitOpts(width="100%", height="420px"))
+    heat.add_xaxis(x_labels)
+    heat.add_yaxis(
+        "",
+        y_labels,
+        data,
+        label_opts=opts.LabelOpts(is_show=False),
+    )
+    heat.set_global_opts(
+        tooltip_opts=opts.TooltipOpts(is_show=True),
+        legend_opts=opts.LegendOpts(is_show=False),
+        visualmap_opts=opts.VisualMapOpts(
+            min_=min_value,
+            max_=max_value,
+            is_show=False,
+            range_color=[
+                "#313695",
+                "#4575b4",
+                "#74add1",
+                "#abd9e9",
+                "#e0f3f8",
+                "#ffffbf",
+                "#fee090",
+                "#fdae61",
+                "#f46d43",
+                "#d73027",
+                "#a50026",
+            ],
+        ),
+        # 减小热力图主体，给产品名(轴标签)更多空间
+        xaxis_opts=opts.AxisOpts(
+            type_="category",
+            axislabel_opts=opts.LabelOpts(rotate=45, font_size=10, margin=10),
+        ),
+        yaxis_opts=opts.AxisOpts(
+            type_="category",
+            axislabel_opts=opts.LabelOpts(rotate=0, font_size=10, margin=10),
+        ),
+        toolbox_opts=opts.ToolboxOpts(
+            is_show=True,
+            pos_left="right",
+            feature=opts.ToolBoxFeatureOpts(
+                save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
+                    title="保存为图片",
+                    pixel_ratio=4,
+                    background_color="white",
+                    name="correlation_heatmap",
+                ),
+                restore=opts.ToolBoxFeatureRestoreOpts(),
+                magic_type=opts.ToolBoxFeatureMagicTypeOpts(is_show=False),
+                data_view=opts.ToolBoxFeatureDataViewOpts(is_show=False),
+            ),
+        ),
+    )
+
+    # 用 Grid 调整 plot 区域，预留上、下、左空间给标签
+    grid = Grid(init_opts=opts.InitOpts(width="100%", height="420px"))
+    grid.add(
+        heat,
+        grid_opts=opts.GridOpts(
+            # 这些百分比可以根据需要微调
+            pos_left="30%",   # 给左侧 y 轴产品名留更大空间
+            pos_right="10%",
+            pos_top="10%",    # 给上方 x 轴旋转后的标签留空间
+            pos_bottom="40%", # 给下侧（如果有标签/工具条）留空间
+        ),
+        is_control_axis_index=True,
+    )
+    return grid
+
+
+def compute_interval_returns(series: pd.Series, ref_date: pd.Timestamp, days_list):
+    # 根据最后日期向后找对应窗口的起始点，若无精确日期则采用最接近的过往日期
+    returns = {}
+    for d in days_list:
+        start_date = ref_date - pd.Timedelta(days=d)
+        # 找到不晚于 start_date 的最近日期
+        past_idx = series.index[series.index <= start_date]
+        if len(past_idx) == 0:
+            returns[d] = np.nan
+            continue
+        start_val = series.loc[past_idx[-1]]
+        end_val = series.loc[series.index[series.index <= ref_date][-1]]
+        if pd.isna(start_val) or pd.isna(end_val) or start_val == 0:
+            returns[d] = np.nan
+        else:
+            returns[d] = float(end_val / start_val - 1.0)
+    return returns
+
+
+def build_interval_returns_table_html(
+    portfolio_series: pd.Series,
+    navs_pivot: pd.DataFrame,
+    funds_df: pd.DataFrame,
+    ref_date: pd.Timestamp,
+    fund_url_template: str,
+):
+    # 需要计算 7, 30, 90, 365 天收益
+    windows = [7, 30, 90, 365]
+    # 组合行
+    pt_ret = compute_interval_returns(portfolio_series, ref_date, windows)
+    rows = []
+    rows.append(
+        {
+            "名称": "组合",
+            "代码": "-",
+            "近一周收益": pt_ret[7],
+            "近一个月收益": pt_ret[30],
+            "近三个月收益": pt_ret[90],
+            "近一年收益": pt_ret[365],
+            "link": None,
+        }
+    )
+    # 子基金行
+    for _, r in funds_df.iterrows():
+        code = r["fund_code"]
+        name = r["name"]
+        s = navs_pivot[code]
+        ret = compute_interval_returns(s, ref_date, windows)
+        url = fund_url_template.format(code=code)
+        rows.append(
+            {
+                "名称": f'<a href="{url}" target="_blank">{name}</a>',
+                "代码": code,
+                "近一周收益": ret[7],
+                "近一个月收益": ret[30],
+                "近三个月收益": ret[90],
+                "近一年收益": ret[365],
+                "link": url,
+            }
+        )
+    df = pd.DataFrame(rows)
+    # 百分比格式化
+    for c in ["近一周收益", "近一个月收益", "近三个月收益", "近一年收益"]:
+        df[c] = df[c].apply(lambda x: (f"{x*100:.2f}%" if pd.notnull(x) else ""))
+    html = df[
+        ["名称", "近一周收益", "近一个月收益", "近三个月收益", "近一年收益"]
+    ].to_html(index=False, escape=False)
+    return html
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="data")
-    parser.add_argument("--out-dir", default="out")
+    parser.add_argument("--out-dir", default="docs")
     parser.add_argument("--base-value", type=float, default=1.0)
     parser.add_argument(
         "--fund-url-template", default="https://example.com/fund/{code}"
@@ -710,9 +870,31 @@ def main():
     current_vals_named = current_vals.rename(index=code_to_name)
     pie_chart = build_pie_chart(current_vals_named[current_vals_named > 0])
 
+    # 相关性热力图：使用子基金的日收益率相关系数
+    daily_returns = navs_pivot.pct_change().dropna(how="all")
+    corr = daily_returns.corr()
+    # 将列和索引替换成基金名称
+    name_map = dict(zip(funds_df["fund_code"], funds_df["name"]))
+    corr_named = corr.rename(index=name_map, columns=name_map)
+    heatmap_chart = build_heatmap_chart(corr_named)
+
+    # 区间收益表 HTML
+    interval_table_html = build_interval_returns_table_html(
+        pd.Series(portfolio_nav.values, index=dates),
+        navs_pivot,
+        funds_df,
+        last_date,
+        args.fund_url_template,
+    )
+
     # Build JS snippets and chart ids
     # pyecharts auto-generates chart.chart_id
-    charts = [("portfolio", portfolio_chart), ("area", area_chart), ("pie", pie_chart)]
+    charts = [
+        ("portfolio", portfolio_chart),
+        ("area", area_chart),
+        ("pie", pie_chart),
+        ("heatmap", heatmap_chart),
+    ]
     charts_init_js_parts = []
     for name, chart in charts:
         cid = chart.chart_id
@@ -807,8 +989,10 @@ def main():
         portfolio_chart_id=portfolio_chart.chart_id,
         area_chart_id=area_chart.chart_id,
         pie_chart_id=pie_chart.chart_id,
+        heatmap_chart_id=heatmap_chart.chart_id,
         charts_init_js=charts_init_js,
         table_html=table_html,
+        interval_table_html=interval_table_html,
         fund_url_template=args.fund_url_template,
     )
 
