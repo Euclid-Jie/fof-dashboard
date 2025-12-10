@@ -3,9 +3,10 @@
         {
             "id": "SAHL94",
             "name": "世纪前沿红利优选1号",
+            "benchmark": "000922.CSI",
             "purchaseDate": "2024-03-08",
             "purchaseNav": 1.0000,
-            "shares": 2500000,
+            "shares": 5000000,
             "url": "SAHL94.html",
             "type": "混合型",
             "manager": "张三",
@@ -15,6 +16,7 @@
         {
             "id": "SACU97",
             "name": "世纪前沿中证2000指数增强1号",
+            "benchmark": "932000.CSI",
             "purchaseDate": "2023-10-27",
             "purchaseNav": 1.0000,
             "shares": 2500000,
@@ -27,6 +29,7 @@
         {
             "id": "B2373B",
             "name": "世纪前沿金选中证1000指数增强1号B类",
+            "benchmark": "000852.SH",
             "purchaseDate": "2023-07-18",
             "purchaseNav": 1.0000,
             "shares": 2500000,

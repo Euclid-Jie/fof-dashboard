@@ -1,229 +1,121 @@
 import os
 import argparse
+import glob
+import json
+import requests
 import pandas as pd
 import numpy as np
+import sqlalchemy
 from jinja2 import Environment, FileSystemLoader
-from pyecharts.charts import Line, Pie, Grid
-
-# 新增 HeatMap
-from pyecharts.charts import HeatMap
+from pyecharts.charts import Line, Pie, Grid, HeatMap, Grid
 from pyecharts import options as opts
 import textwrap
+from config import SQL_HOST, SQL_PASSWORDS
+from utils import generate_trading_date
+from Nav_Show.performance_report import PerformanceReportGenerator
 
-# optional dependency for download
-try:
-    import requests
-except Exception:
-    requests = None
 
 ECHARTS_CDN_TEMPLATE = (
     "https://cdn.jsdelivr.net/npm/echarts@{version}/dist/echarts.min.js"
 )
 DEFAULT_ECHARTS_VERSION = "5.4.2"
 
+engine_data = sqlalchemy.create_engine(
+    f"mysql+pymysql://dev:{SQL_PASSWORDS}@{SQL_HOST}:3306/UpdatedData?charset=utf8mb4"
+)
 
-import glob
-import json
-from pyecharts.charts import Grid
 
-
-def read_csvs(data_dir):
+def read_csvs(data_dir, output_dir):
     # Check for fund.json
     json_path = os.path.join(data_dir, "fund.json")
-    if os.path.exists(json_path):
-        print(f"Loading configuration from {json_path}...")
-        with open(json_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+    with open(json_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
 
-        funds_data = config.get("funds", [])
-        if not funds_data:
-            raise ValueError("No funds found in fund.json")
-
-        funds_list = []
-        navs_list = []
-        txns_list = []
-
-        for fund in funds_data:
-            fund_id = fund["id"]
-            fund_name = fund["name"]
-            nav_path_hint = fund.get("nav_data_path", "")
-
-            # Try to find the file
-            # 1. Direct path
-            fpath = os.path.join(data_dir, os.path.basename(nav_path_hint))
-            if not os.path.exists(fpath):
-                # 2. Fuzzy match by name
-                # e.g. "世纪前沿红利优选1号" -> "世纪前沿红利优选1号*.xlsx"
-                pattern = os.path.join(data_dir, f"{fund_name}*.xlsx")
-                matches = glob.glob(pattern)
-                if matches:
-                    fpath = matches[0]
-                else:
-                    print(
-                        f"Warning: Could not find NAV file for {fund_name} (hint: {nav_path_hint})"
-                    )
-                    continue
-
-            print(f"Processing {fund_name} from {fpath}")
-
-            # Read NAVs
-            try:
-                df = pd.read_excel(fpath)
-                if "日期" not in df.columns:
-                    print(f"Skipping {fund_name}: '日期' column not found.")
-                    continue
-
-                nav_col = "复权净值" if "复权净值" in df.columns else "单位净值"
-                if nav_col not in df.columns:
-                    print(f"Skipping {fund_name}: No NAV column found.")
-                    continue
-
-                sub_nav = df[["日期", nav_col]].copy()
-                sub_nav.columns = ["date", "nav"]
-                sub_nav["date"] = pd.to_datetime(sub_nav["date"])
-                sub_nav["nav"] = pd.to_numeric(sub_nav["nav"], errors="coerce")
-                sub_nav["fund_code"] = fund_id
-                sub_nav = sub_nav.dropna()
-                navs_list.append(sub_nav)
-
-                funds_list.append(
-                    {
-                        "fund_code": fund_id,
-                        "name": fund_name,
-                        "link_template": fund.get("url", ""),
-                    }
-                )
-
-                # Transaction
-                txns_list.append(
-                    {
-                        "date": pd.to_datetime(fund["purchaseDate"]),
-                        "fund_code": fund_id,
-                        "shares": float(fund["shares"]),
-                        "price": float(fund["purchaseNav"]),
-                        "type": "buy",
-                    }
-                )
-
-            except Exception as e:
-                print(f"Error reading {fpath}: {e}")
-
-        if not funds_list:
-            raise ValueError("No valid fund data loaded from fund.json configuration.")
-
-        funds_df = pd.DataFrame(funds_list)
-        navs_df = pd.concat(navs_list, ignore_index=True)
-        txns_df = pd.DataFrame(txns_list)
-
-        return funds_df, navs_df, txns_df
-
-    # Fallback to scanning all xlsx if no json (or keep old logic)
-    # ... (Previous logic for scanning all xlsx)
-    # 1. Scan for Excel files
-    xlsx_files = glob.glob(os.path.join(data_dir, "*.xlsx"))
-    if not xlsx_files:
-        print(
-            "Warning: No .xlsx files found in data directory. Falling back to CSVs if available."
-        )
-        try:
-            funds = pd.read_csv(os.path.join(data_dir, "funds.csv"), dtype=str).fillna(
-                ""
-            )
-            navs = pd.read_csv(os.path.join(data_dir, "navs.csv"), dtype=str)
-            txns = pd.read_csv(
-                os.path.join(data_dir, "transactions.csv"), dtype=str
-            ).fillna("")
-            navs["nav"] = navs["nav"].astype(float)
-            navs["date"] = pd.to_datetime(navs["date"])
-            txns["date"] = pd.to_datetime(txns["date"])
-            if "shares" in txns.columns:
-                txns["shares"] = txns["shares"].astype(float)
-            else:
-                txns["shares"] = 0.0
-            if "price" in txns.columns:
-                txns["price"] = txns["price"].astype(float)
-            else:
-                txns["price"] = np.nan
-            return funds, navs, txns
-        except Exception as e:
-            raise FileNotFoundError(
-                f"Could not load data from CSVs and no XLSX files found: {e}"
-            )
-
-    print(f"Found {len(xlsx_files)} Excel files. Processing...")
+    funds_data = config.get("funds", [])
+    if not funds_data:
+        raise ValueError("No funds found in fund.json")
 
     funds_list = []
     navs_list = []
-
-    for fpath in xlsx_files:
-        fname = os.path.basename(fpath)
-        base_name = os.path.splitext(fname)[0]
-        fund_code = base_name
-        fund_name = base_name
-
-        funds_list.append({"fund_code": fund_code, "name": fund_name})
-
-        try:
-            df = pd.read_excel(fpath)
-            if "日期" not in df.columns:
-                print(f"Skipping {fname}: '日期' column not found.")
-                continue
-
-            nav_col = "复权净值" if "复权净值" in df.columns else "单位净值"
-            if nav_col not in df.columns:
-                print(f"Skipping {fname}: No NAV column found.")
-                continue
-
-            sub_nav = df[["日期", nav_col]].copy()
-            sub_nav.columns = ["date", "nav"]
-            sub_nav["date"] = pd.to_datetime(sub_nav["date"])
-            sub_nav["nav"] = pd.to_numeric(sub_nav["nav"], errors="coerce")
-            sub_nav["fund_code"] = fund_code
-            sub_nav = sub_nav.dropna()
-            navs_list.append(sub_nav)
-
-        except Exception as e:
-            print(f"Error reading {fname}: {e}")
-
-    if not funds_list:
-        raise ValueError("No valid fund data found.")
-
-    funds_df = pd.DataFrame(funds_list)
-    navs_df = pd.concat(navs_list, ignore_index=True)
-
-    # Generate Transactions (Equal Weight, Buy on First Date)
-    TOTAL_CAPITAL = 10_000_000.0
-    num_funds = len(funds_df)
-    per_fund_capital = TOTAL_CAPITAL / num_funds
-
     txns_list = []
 
-    for code in funds_df["fund_code"]:
-        f_navs = navs_df[navs_df["fund_code"] == code].sort_values("date")
-        if f_navs.empty:
-            print(f"Warning: No NAVs for {code}, cannot allocate.")
-            continue
+    for fund in funds_data:
+        fund_id = fund["id"]
+        fund_name = fund["name"]
+        nav_path_hint = fund.get("nav_data_path", "")
 
-        first_row = f_navs.iloc[0]
-        start_date = first_row["date"]
-        start_nav = first_row["nav"]
+        # Try to find the file
+        # 1. Direct path
+        fpath = os.path.join(data_dir, os.path.basename(nav_path_hint))
+        if not os.path.exists(fpath):
+            raise FileNotFoundError(
+                f"Warning: Could not find NAV file for {fund_name} (hint: {nav_path_hint})"
+            )
+        # Read NAVs
+        df = pd.read_excel(fpath)
+        assert "日期" in df.columns, f"Error: '日期' column not found in {fpath}"
+        assert (
+            "复权净值" in df.columns
+        ), f"Error: '复权净值' column not found in {fpath}"
 
-        if start_nav <= 0:
-            print(f"Warning: Initial NAV <= 0 for {code}, cannot allocate.")
-            continue
+        sub_nav = df[["日期", "复权净值"]].copy()
+        sub_nav.columns = ["date", "nav"]
+        sub_nav["fund_code"] = fund_id
+        sub_nav["date"] = pd.to_datetime(sub_nav["date"])
+        begin_date = sub_nav["date"].min()
+        end_date = sub_nav["date"].max()
+        sub_nav.set_index("date", inplace=True)
 
-        shares = per_fund_capital / start_nav
+        _, weekly_trade_date = generate_trading_date(
+            begin_date - np.timedelta64(10, "D"),
+            end_date + np.timedelta64(5, "D"),
+        )
+        nav_series = sub_nav["nav"].reindex(weekly_trade_date)
+        nav_series = nav_series[nav_series.index >= begin_date]
+        nav_series = nav_series[nav_series.notna()]
+        benchmark = fund.get("benchmark", None)
+        if benchmark is not None:
+            bench_df = pd.read_sql_query(
+                f"SELECT date,CLOSE FROM bench_basic_data WHERE code = '{benchmark}'",
+                engine_data,
+            )
+            bench_df["date"] = pd.to_datetime(bench_df["date"])
+            bench_df.set_index("date", inplace=True)
+        # Generate report
+        nav = nav_series.values
+        date = nav_series.index.values
+        bench_df = bench_df.reindex(nav_series.index)
+        report = PerformanceReportGenerator(
+            fund_name,
+            date,
+            nav,
+            benchmark=bench_df["CLOSE"].values if benchmark is not None else None,
+        )
+        report.render(os.path.join(output_dir, fund_id + ".html"))
 
+        funds_list.append(
+            {
+                "fund_code": fund_id,
+                "name": fund_name,
+                "link_template": os.path.join(output_dir, fund_id + ".html"),
+            }
+        )
+        # NAVs
+        navs_sub = sub_nav.reset_index()[["date", "fund_code", "nav"]]
+        navs_list.append(navs_sub)
+        # Transaction
         txns_list.append(
             {
-                "date": start_date,
-                "fund_code": code,
-                "shares": shares,
-                "price": start_nav,
+                "date": pd.to_datetime(fund["purchaseDate"]),
+                "fund_code": fund_id,
+                "shares": float(fund["shares"]),
+                "price": float(fund["purchaseNav"]),
                 "type": "buy",
             }
         )
 
+    funds_df = pd.DataFrame(funds_list)
+    navs_df = pd.concat(navs_list, ignore_index=True)
     txns_df = pd.DataFrame(txns_list)
 
     return funds_df, navs_df, txns_df
@@ -656,10 +548,10 @@ def build_heatmap_chart(corr_df):
         heat,
         grid_opts=opts.GridOpts(
             # 这些百分比可以根据需要微调
-            pos_left="30%",   # 给左侧 y 轴产品名留更大空间
+            pos_left="30%",  # 给左侧 y 轴产品名留更大空间
             pos_right="10%",
-            pos_top="10%",    # 给上方 x 轴旋转后的标签留空间
-            pos_bottom="40%", # 给下侧（如果有标签/工具条）留空间
+            pos_top="10%",  # 给上方 x 轴旋转后的标签留空间
+            pos_bottom="40%",  # 给下侧（如果有标签/工具条）留空间
         ),
         is_control_axis_index=True,
     )
@@ -741,15 +633,13 @@ def main():
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--out-dir", default="docs")
     parser.add_argument("--base-value", type=float, default=1.0)
-    parser.add_argument(
-        "--fund-url-template", default="https://example.com/fund/{code}"
-    )
+    parser.add_argument("--fund-url-template", default="./{code}.html")
     parser.add_argument("--echarts-version", default=DEFAULT_ECHARTS_VERSION)
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    funds_df, navs_df, txns_df = read_csvs(args.data_dir)
+    funds_df, navs_df, txns_df = read_csvs(args.data_dir, args.out_dir)
     fund_codes = funds_df["fund_code"].tolist()
 
     navs_pivot = prepare_navs(navs_df, fund_codes)
