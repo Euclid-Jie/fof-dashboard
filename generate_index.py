@@ -193,7 +193,10 @@ def build_portfolio_grid_chart(dates, series, name="组合净值"):
         ),
         xaxis_opts=opts.AxisOpts(type_="category", boundary_gap=False),
         yaxis_opts=opts.AxisOpts(
-            name="收益率 (%)", axislabel_opts=opts.LabelOpts(formatter="{value} %")
+            name="净值",
+            axislabel_opts=opts.LabelOpts(formatter="{value}"),
+            min_=0.95,
+            max_=1.05,
         ),
         datazoom_opts=[
             opts.DataZoomOpts(
@@ -253,7 +256,7 @@ def build_portfolio_grid_chart(dates, series, name="组合净值"):
 
 
 def build_area_stack_chart(dates, df_market_values):
-    xaxis = [d.strftime("%Y-%m-%d") for d in dates]
+    xaxis = [np.datetime_as_string(d, "D") for d in dates]
     chart = Line(init_opts=opts.InitOpts(width="100%", height="420px"))
     chart.add_xaxis(xaxis)
     for col in df_market_values.columns:
@@ -484,7 +487,6 @@ def build_interval_returns_table_html(
     portfolio_date: NDArray[np.datetime64],
     navs_pivot: pd.DataFrame,
     funds_df: pd.DataFrame,
-    ref_date: pd.Timestamp,
     fund_url_template: str,
 ):
     _base_interval = NavMetric.generate_intervals(
@@ -495,7 +497,8 @@ def build_interval_returns_table_html(
         "portfolio",
         portfolio_nav,
         portfolio_date,
-        freq="W",
+        freq="D",
+        ffillna=True,
     )
     porf_metric = porf_metric.calculate_interval_return(_base_interval)
     interval_return = {}
@@ -516,7 +519,7 @@ def build_interval_returns_table_html(
     for _, r in funds_df.iterrows():
         code = r["fund_code"]
         name = r["name"]
-        s = navs_pivot[code]
+        s = navs_pivot[code].dropna()
         metric = NavMetric(
             name,
             s.values,
@@ -592,7 +595,7 @@ def main():
     # So we need to ensure we only calculate profit for dates >= purchaseDate.
 
     # Let's create a profit matrix
-    profit_matrix = pd.DataFrame(0.0, index=dates, columns=fund_codes)
+    profit_matrix = pd.DataFrame(np.nan, index=dates, columns=fund_codes)
 
     for _, row in buys.iterrows():
         code = row["fund_code"]
@@ -618,9 +621,14 @@ def main():
         fund_profit = (nav_series[mask] - purchase_price) * shares
 
         # Assign to matrix
-        profit_matrix.loc[mask, code] += fund_profit
+        profit_matrix.loc[mask, code] = fund_profit
 
     # Total daily profit
+    # 找到第一个出现非np.nan的行, 剔除其前面的所有行, 额外多一行
+    idx_start = (
+        np.where(profit_matrix.index == profit_matrix.first_valid_index())[0].item() - 1
+    )
+    profit_matrix = profit_matrix.iloc[idx_start:]
     total_daily_profit = profit_matrix.sum(axis=1)
 
     # 3. Portfolio NAV
@@ -634,8 +642,8 @@ def main():
     # Or simply NAV * Shares.
     # Let's stick to NAV * Shares for the area chart as it represents the actual value of holdings.
     # We need to compute holdings (shares) over time.
-    holdings = compute_holdings(txns_df, dates, fund_codes)
-    market = holdings * navs_pivot
+    holdings = compute_holdings(txns_df, dates, fund_codes)[idx_start:]
+    market = holdings * navs_pivot[idx_start:]
 
     # Note: portfolio_nav calculated above is "Net Asset Value" of the FOF (normalized to 1).
     # The 'portfolio_value' variable in original code was sum of market values.
@@ -677,7 +685,7 @@ def main():
 
     # Rename columns for area chart
     market_named = market.rename(columns=code_to_name)
-    area_chart = build_area_stack_chart(dates, market_named)
+    area_chart = build_area_stack_chart(portfolio_nav.index.values, market_named)
 
     last_date = dates[-1]
     current_holdings = holdings.loc[last_date]
@@ -699,10 +707,9 @@ def main():
     # 区间收益表 HTML
     interval_table_html = build_interval_returns_table_html(
         portfolio_nav.values,
-        dates,
+        portfolio_nav.index.values,
         navs_pivot,
         funds_df,
-        last_date,
         args.fund_url_template,
     )
 

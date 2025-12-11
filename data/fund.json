@@ -14,8 +14,8 @@
             "id": "070009",
             "name": "嘉实超短债",
             "purchaseDate": "2025-11-10",
-            "purchaseNav": 1.0541,
-            "shares": 2846029.7884,
+            "purchaseNav": 1.6205,
+            "shares": 1851280.4690,
             "url": "070009.html",
             "type": "债券型",
             "nav_data_path": "data/嘉实超短债债券C净值.xlsx"
@@ -34,8 +34,8 @@
             "id": "SASP20",
             "name": "致达润祥",
             "purchaseDate": "2025-11-11",
-            "purchaseNav": 1.0126,
-            "shares": 987556.7845,
+            "purchaseNav": 1.118,
+            "shares": 894454.3828,
             "url": "SASP20.html",
             "type": "套利策略",
             "nav_data_path": "data/致达润祥净值.xlsx"
