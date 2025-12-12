@@ -2,30 +2,24 @@ import os
 import argparse
 import glob
 import json
-import requests
 import pandas as pd
 import numpy as np
+from numpy.typing import NDArray
 import sqlalchemy
 from jinja2 import Environment, FileSystemLoader
-from pyecharts.charts import Line, Pie, Grid, HeatMap, Grid
+from pyecharts.charts import Line, Pie, Grid, HeatMap
 from pyecharts import options as opts
-import textwrap
 from config import SQL_HOST, SQL_PASSWORDS
 from utils import generate_trading_date
 from Nav_Show.performance_report import PerformanceReportGenerator
-
-
-ECHARTS_CDN_TEMPLATE = (
-    "https://cdn.jsdelivr.net/npm/echarts@{version}/dist/echarts.min.js"
-)
-DEFAULT_ECHARTS_VERSION = "5.4.2"
+from Nav_Show.nav_interval_metric.nav_metric import NavMetric
 
 engine_data = sqlalchemy.create_engine(
     f"mysql+pymysql://dev:{SQL_PASSWORDS}@{SQL_HOST}:3306/UpdatedData?charset=utf8mb4"
 )
 
 
-def read_csvs(data_dir, output_dir):
+def read_csvs(data_dir, output_dir) -> tuple:
     # Check for fund.json
     json_path = os.path.join(data_dir, "fund.json")
     with open(json_path, "r", encoding="utf-8") as f:
@@ -81,10 +75,10 @@ def read_csvs(data_dir, output_dir):
             )
             bench_df["date"] = pd.to_datetime(bench_df["date"])
             bench_df.set_index("date", inplace=True)
+            bench_df = bench_df.reindex(nav_series.index)
         # Generate report
         nav = nav_series.values
         date = nav_series.index.values
-        bench_df = bench_df.reindex(nav_series.index)
         report = PerformanceReportGenerator(
             fund_name,
             date,
@@ -163,31 +157,14 @@ def compute_holdings(txns_df, dates, fund_codes):
     return holdings
 
 
-def compute_metrics(portfolio_nav_series):
-    pv = portfolio_nav_series
-    returns = pv.pct_change().dropna()
-    days = max((pv.index[-1] - pv.index[0]).days, 1)
-    total_return = pv.iloc[-1] / pv.iloc[0] - 1.0
-    annualized_return = (pv.iloc[-1] / pv.iloc[0]) ** (365.0 / days) - 1.0
-    vol = returns.std() * np.sqrt(252) if not returns.empty else 0.0
-    cummax = pv.cummax()
-    drawdown = (pv - cummax) / cummax
-    max_dd = drawdown.min() if not drawdown.empty else 0.0
-    return {
-        "total_return": total_return,
-        "annualized_return": annualized_return,
-        "annual_vol": vol,
-        "max_drawdown": max_dd,
-    }
-
-
 def build_portfolio_grid_chart(dates, series, name="组合净值"):
     # Calculate drawdown
     pv = pd.Series(series, index=dates)
     cummax = pv.cummax()
     drawdown = (pv - cummax) / cummax
 
-    date_list = [d.strftime("%Y-%m-%d") for d in dates]
+    # Handle dates: if numpy array of datetime64, convert to string list
+    date_list = dates.astype("M8[D]").astype(str).tolist()
 
     # Top chart: NAV
     line = (
@@ -201,46 +178,53 @@ def build_portfolio_grid_chart(dates, series, name="组合净值"):
             label_opts=opts.LabelOpts(is_show=False),
             linestyle_opts=opts.LineStyleOpts(width=2, color="#d9534f"),
         )
-        .set_global_opts(
-            title_opts=opts.TitleOpts(
-                pos_left="center",
-                title_textstyle_opts=opts.TextStyleOpts(
-                    font_size=20, font_weight="bold", color="#333"
+    )
+    line.set_global_opts(
+        title_opts=opts.TitleOpts(
+            pos_left="center",
+            title_textstyle_opts=opts.TextStyleOpts(
+                font_size=20, font_weight="bold", color="#333"
+            ),
+        ),
+        legend_opts=opts.LegendOpts(pos_top="8%", pos_left="68%", is_show=False),
+        tooltip_opts=opts.TooltipOpts(trigger="axis", axis_pointer_type="cross"),
+        axispointer_opts=opts.AxisPointerOpts(
+            is_show=True, link=[{"xAxisIndex": "all"}]
+        ),
+        xaxis_opts=opts.AxisOpts(type_="category", boundary_gap=False),
+        yaxis_opts=opts.AxisOpts(
+            name="净值",
+            axislabel_opts=opts.LabelOpts(formatter="{value}"),
+            min_=0.95,
+            max_=1.05,
+        ),
+        datazoom_opts=[
+            opts.DataZoomOpts(
+                type_="slider",
+                xaxis_index=[0, 1],
+                range_start=0,
+                range_end=100,
+            )
+        ],
+        toolbox_opts=opts.ToolboxOpts(
+            is_show=True,
+            pos_left="right",
+            feature=opts.ToolBoxFeatureOpts(
+                # 启用保存为图片功能
+                save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
+                    title="保存为图片",
+                    pixel_ratio=4,  # 提高分辨率
+                    background_color="white",  # 设置背景色
+                    name="performance_report_chart",  # 设置文件名
                 ),
+                # 启用还原按钮（重置视图）
+                restore=True,
+                # 禁用所有其他默认功能
+                magic_type=False,  # 关闭动态类型切换（如折线/柱状切换）
+                brush=False,  # 关闭区域选择
+                data_view=False,  # 关闭数据视图
             ),
-            tooltip_opts=opts.TooltipOpts(trigger="axis", axis_pointer_type="cross"),
-            axispointer_opts=opts.AxisPointerOpts(
-                is_show=True, link=[{"xAxisIndex": "all"}]
-            ),
-            xaxis_opts=opts.AxisOpts(
-                type_="category",
-                boundary_gap=False,
-                axislabel_opts=opts.LabelOpts(is_show=False),
-            ),
-            yaxis_opts=opts.AxisOpts(name="净值"),
-            legend_opts=opts.LegendOpts(pos_top="8%", pos_left="68%", is_show=False),
-            datazoom_opts=[
-                opts.DataZoomOpts(
-                    type_="slider", xaxis_index=[0, 1], range_start=0, range_end=100
-                ),
-            ],
-            toolbox_opts=opts.ToolboxOpts(
-                is_show=True,
-                pos_left="right",
-                feature=opts.ToolBoxFeatureOpts(
-                    save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
-                        title="保存为图片",
-                        pixel_ratio=4,
-                        background_color="white",
-                        name="portfolio_chart",
-                    ),
-                    restore=opts.ToolBoxFeatureRestoreOpts(),
-                    magic_type=opts.ToolBoxFeatureMagicTypeOpts(is_show=False),
-                    brush=opts.ToolBoxFeatureBrushOpts(type_=[]),
-                    data_view=opts.ToolBoxFeatureDataViewOpts(is_show=False),
-                ),
-            ),
-        )
+        ),
     )
 
     # Bottom chart: Drawdown
@@ -256,27 +240,23 @@ def build_portfolio_grid_chart(dates, series, name="组合净值"):
             linestyle_opts=opts.LineStyleOpts(width=1, color="#d9534f"),
             areastyle_opts=opts.AreaStyleOpts(opacity=0.5, color="#d9534f"),
         )
-        .set_global_opts(
-            xaxis_opts=opts.AxisOpts(
-                type_="category", boundary_gap=False, is_show=False
-            ),
-            yaxis_opts=opts.AxisOpts(
-                name="回撤(%)", axislabel_opts=opts.LabelOpts(formatter="{value}%")
-            ),
-            legend_opts=opts.LegendOpts(is_show=False, pos_left="73%", pos_top="70%"),
-            tooltip_opts=opts.TooltipOpts(trigger="axis"),
-        )
     )
-
+    dd_chart.set_global_opts(
+        yaxis_opts=opts.AxisOpts(
+            name="回撤 (%)", axislabel_opts=opts.LabelOpts(formatter="{value} %")
+        ),
+        legend_opts=opts.LegendOpts(is_show=False, pos_left="73%", pos_top="70%"),
+        xaxis_opts=opts.AxisOpts(is_show=False),
+    )
     grid = Grid(init_opts=opts.InitOpts(width="100%", height="700px"))
     grid.add(line, grid_opts=opts.GridOpts(pos_top="12%", pos_bottom="33%"))
-    grid.add(dd_chart, grid_opts=opts.GridOpts(pos_top="74%", pos_bottom="7%"))
+    grid.add(dd_chart, grid_opts=opts.GridOpts(pos_top="80%", pos_bottom="10%"))
 
     return grid
 
 
 def build_area_stack_chart(dates, df_market_values):
-    xaxis = [d.strftime("%Y-%m-%d") for d in dates]
+    xaxis = [np.datetime_as_string(d, "D") for d in dates]
     chart = Line(init_opts=opts.InitOpts(width="100%", height="420px"))
     chart.add_xaxis(xaxis)
     for col in df_market_values.columns:
@@ -360,70 +340,14 @@ def build_pie_chart(series):
     return pie
 
 
-def inline_echarts_js(version=DEFAULT_ECHARTS_VERSION):
-    # 尝试使用本地缓存
-    local_dir = "static"
-    filename = f"echarts-{version}.min.js"
-    local_path = os.path.join(local_dir, filename)
-
-    if os.path.exists(local_path):
-        print(f"使用本地缓存的 echarts: {local_path}")
-        try:
-            with open(local_path, "r", encoding="utf-8") as f:
-                return f.read(), None
-        except Exception as e:
-            print(f"读取本地文件失败: {e}，尝试重新下载。")
-
-    cdn = ECHARTS_CDN_TEMPLATE.format(version=version)
-    if requests is None:
-        print(
-            "requests 未安装，不能下载 echarts.js，最终页面将使用 CDN 引用（需要联网）。"
-        )
-        return None, cdn
-    try:
-        print(f"正在从 CDN 下载 echarts {version} ... ({cdn})")
-        r = requests.get(cdn, timeout=30)
-        r.raise_for_status()
-        content = r.text
-
-        # 保存到本地
-        try:
-            os.makedirs(local_dir, exist_ok=True)
-            with open(local_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"下载成功并保存至 {local_path}，已内联 echarts.js。")
-        except Exception as e:
-            print(f"保存本地缓存失败: {e}，但仍将内联使用。")
-
-        return content, None
-    except Exception as e:
-        print("下载 echarts 失败：", e)
-        print("生成时将回退为外部 CDN 引用（最终 HTML 会引用 CDN）。")
-        return None, cdn
-
-
-def chart_to_options_js(chart):
+def get_chart_options(chart):
     """
-    从 pyecharts Chart 获取 options 的 JSON 字符串，并返回一个 JS 片段用于 setOption。
+    从 pyecharts Chart 获取 options 的 JSON 字典
     """
-    # Use dump_options_with_quotes to get properly serialized JSON string
     try:
-        opts_json = chart.dump_options_with_quotes()
+        return json.loads(chart.dump_options_with_quotes())
     except Exception:
-        # fallback: use dump_options (string)
-        try:
-            opts_json = chart.dump_options()
-        except Exception:
-            raise RuntimeError("无法从 pyecharts Chart 获取 options")
-
-    # safe JS snippet
-    js = textwrap.dedent(
-        f"""
-    var option = {opts_json};
-    chart.setOption(option);
-    """
-    )
-    return js
+        return json.loads(chart.dump_options())
 
 
 def generate_table_html(df_holdings, fund_url_template):
@@ -558,72 +482,73 @@ def build_heatmap_chart(corr_df):
     return grid
 
 
-def compute_interval_returns(series: pd.Series, ref_date: pd.Timestamp, days_list):
-    # 根据最后日期向后找对应窗口的起始点，若无精确日期则采用最接近的过往日期
-    returns = {}
-    for d in days_list:
-        start_date = ref_date - pd.Timedelta(days=d)
-        # 找到不晚于 start_date 的最近日期
-        past_idx = series.index[series.index <= start_date]
-        if len(past_idx) == 0:
-            returns[d] = np.nan
-            continue
-        start_val = series.loc[past_idx[-1]]
-        end_val = series.loc[series.index[series.index <= ref_date][-1]]
-        if pd.isna(start_val) or pd.isna(end_val) or start_val == 0:
-            returns[d] = np.nan
-        else:
-            returns[d] = float(end_val / start_val - 1.0)
-    return returns
-
-
 def build_interval_returns_table_html(
-    portfolio_series: pd.Series,
+    portfolio_nav: NDArray[np.float64],
+    portfolio_date: NDArray[np.datetime64],
     navs_pivot: pd.DataFrame,
     funds_df: pd.DataFrame,
-    ref_date: pd.Timestamp,
     fund_url_template: str,
 ):
-    # 需要计算 7, 30, 90, 365 天收益
-    windows = [7, 30, 90, 365]
+    _base_interval = NavMetric.generate_intervals(
+        last_day=np.datetime64("2025-12-05"), last_week_day=np.datetime64("2025-11-28")
+    )
     # 组合行
-    pt_ret = compute_interval_returns(portfolio_series, ref_date, windows)
+    porf_metric = NavMetric(
+        "portfolio",
+        portfolio_nav,
+        portfolio_date,
+        freq="D",
+        ffillna=True,
+    )
+    porf_metric = porf_metric.calculate_interval_return(_base_interval)
+    interval_return = {}
+    for interval in porf_metric:
+        interval_return[interval.name] = interval.interval_return
     rows = []
     rows.append(
         {
             "名称": "组合",
-            "代码": "-",
-            "近一周收益": pt_ret[7],
-            "近一个月收益": pt_ret[30],
-            "近三个月收益": pt_ret[90],
-            "近一年收益": pt_ret[365],
-            "link": None,
+            "代码": "",
+            "近一周收益": interval_return.get("recent_week", np.nan),
+            "近一个月收益": interval_return.get("recent_month", np.nan),
+            "年初至今回报": interval_return.get("ytd", np.nan),
+            "近一年收益": interval_return.get("recent_year", np.nan),
         }
     )
     # 子基金行
     for _, r in funds_df.iterrows():
         code = r["fund_code"]
         name = r["name"]
-        s = navs_pivot[code]
-        ret = compute_interval_returns(s, ref_date, windows)
+        s = navs_pivot[code].dropna()
+        metric = NavMetric(
+            name,
+            s.values,
+            s.index.values,
+            freq="W",
+        )
+        metric = metric.calculate_interval_return(_base_interval)
+        ret = {}
+        for interval in metric:
+            ret[interval.name] = interval.interval_return
+
         url = fund_url_template.format(code=code)
         rows.append(
             {
                 "名称": f'<a href="{url}" target="_blank">{name}</a>',
                 "代码": code,
-                "近一周收益": ret[7],
-                "近一个月收益": ret[30],
-                "近三个月收益": ret[90],
-                "近一年收益": ret[365],
-                "link": url,
+                "近一周收益": ret.get("recent_week", np.nan),
+                "近一个月收益": ret.get("recent_month", np.nan),
+                "年初至今回报": ret.get("ytd", np.nan),
+                "近一年收益": ret.get("recent_year", np.nan),
             }
         )
+
     df = pd.DataFrame(rows)
     # 百分比格式化
-    for c in ["近一周收益", "近一个月收益", "近三个月收益", "近一年收益"]:
+    for c in ["近一周收益", "近一个月收益", "年初至今回报", "近一年收益"]:
         df[c] = df[c].apply(lambda x: (f"{x*100:.2f}%" if pd.notnull(x) else ""))
     html = df[
-        ["名称", "近一周收益", "近一个月收益", "近三个月收益", "近一年收益"]
+        ["名称", "近一周收益", "近一个月收益", "年初至今回报", "近一年收益"]
     ].to_html(index=False, escape=False)
     return html
 
@@ -634,7 +559,6 @@ def main():
     parser.add_argument("--out-dir", default="docs")
     parser.add_argument("--base-value", type=float, default=1.0)
     parser.add_argument("--fund-url-template", default="./{code}.html")
-    parser.add_argument("--echarts-version", default=DEFAULT_ECHARTS_VERSION)
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -671,7 +595,7 @@ def main():
     # So we need to ensure we only calculate profit for dates >= purchaseDate.
 
     # Let's create a profit matrix
-    profit_matrix = pd.DataFrame(0.0, index=dates, columns=fund_codes)
+    profit_matrix = pd.DataFrame(np.nan, index=dates, columns=fund_codes)
 
     for _, row in buys.iterrows():
         code = row["fund_code"]
@@ -697,9 +621,14 @@ def main():
         fund_profit = (nav_series[mask] - purchase_price) * shares
 
         # Assign to matrix
-        profit_matrix.loc[mask, code] += fund_profit
+        profit_matrix.loc[mask, code] = fund_profit
 
     # Total daily profit
+    # 找到第一个出现非np.nan的行, 剔除其前面的所有行, 额外多一行
+    idx_start = (
+        np.where(profit_matrix.index == profit_matrix.first_valid_index())[0].item() - 1
+    )
+    profit_matrix = profit_matrix.iloc[idx_start:]
     total_daily_profit = profit_matrix.sum(axis=1)
 
     # 3. Portfolio NAV
@@ -713,8 +642,8 @@ def main():
     # Or simply NAV * Shares.
     # Let's stick to NAV * Shares for the area chart as it represents the actual value of holdings.
     # We need to compute holdings (shares) over time.
-    holdings = compute_holdings(txns_df, dates, fund_codes)
-    market = holdings * navs_pivot
+    holdings = compute_holdings(txns_df, dates, fund_codes)[idx_start:]
+    market = holdings * navs_pivot[idx_start:]
 
     # Note: portfolio_nav calculated above is "Net Asset Value" of the FOF (normalized to 1).
     # The 'portfolio_value' variable in original code was sum of market values.
@@ -733,23 +662,30 @@ def main():
     # Portfolio Value = Total Cost + Total Daily Profit
     portfolio_value = total_cost + total_daily_profit
 
-    metrics = compute_metrics(portfolio_nav)
-    total_return = metrics["total_return"]
-    ann_return = metrics["annualized_return"]
-    ann_vol = metrics["annual_vol"]
-    max_dd = metrics["max_drawdown"]
+    # Use NavMetric for metrics and chart data consistency
+    pm = NavMetric(
+        "Portfolio",
+        portfolio_nav.values,
+        portfolio_nav.index.values,
+        freq="D",
+    )
+    stats = pm.base_metric_dict
+
+    total_return = stats["区间收益率"]
+    ann_return = stats["年化收益率"]
+    ann_vol = stats["年化波动率"]
+    max_dd = stats["最大回撤"]
 
     # Create mapping from code to name
     code_to_name = dict(zip(funds_df["fund_code"], funds_df["name"]))
 
     # charts
-    portfolio_chart = build_portfolio_grid_chart(
-        dates, portfolio_nav.values, name="组合净值"
-    )
+    # Use pm.date and pm.nav which might be truncated to 2020-01-01
+    portfolio_chart = build_portfolio_grid_chart(pm.date, pm.nav, name="组合净值")
 
     # Rename columns for area chart
     market_named = market.rename(columns=code_to_name)
-    area_chart = build_area_stack_chart(dates, market_named)
+    area_chart = build_area_stack_chart(portfolio_nav.index.values, market_named)
 
     last_date = dates[-1]
     current_holdings = holdings.loc[last_date]
@@ -770,34 +706,20 @@ def main():
 
     # 区间收益表 HTML
     interval_table_html = build_interval_returns_table_html(
-        pd.Series(portfolio_nav.values, index=dates),
+        portfolio_nav.values,
+        portfolio_nav.index.values,
         navs_pivot,
         funds_df,
-        last_date,
         args.fund_url_template,
     )
 
-    # Build JS snippets and chart ids
-    # pyecharts auto-generates chart.chart_id
-    charts = [
-        ("portfolio", portfolio_chart),
-        ("area", area_chart),
-        ("pie", pie_chart),
-        ("heatmap", heatmap_chart),
-    ]
-    charts_init_js_parts = []
-    for name, chart in charts:
-        cid = chart.chart_id
-        # js to create instance and set option:
-        # create div already present with id=cid in template
-        js_setup = f"var dom = document.getElementById('{cid}'); var chart = echarts.init(dom);"
-        # get option json and setOption
-        js_setopt = chart_to_options_js(chart)
-        # Add resize listener
-        js_resize = "window.addEventListener('resize', function(){ chart.resize(); });"
-        charts_init_js_parts.append(js_setup + "\n" + js_setopt + "\n" + js_resize)
-
-    charts_init_js = "\n\n".join(charts_init_js_parts)
+    # Build chart options
+    charts_options = {
+        "portfolio": get_chart_options(portfolio_chart),
+        "area": get_chart_options(area_chart),
+        "pie": get_chart_options(pie_chart),
+        "heatmap": get_chart_options(heatmap_chart),
+    }
 
     # table summarization
     tx = txns_df.copy()
@@ -856,19 +778,10 @@ def main():
 
     table_html = generate_table_html(df_hold, args.fund_url_template)
 
-    # inline echarts
-    echarts_js_text, cdn_url = inline_echarts_js(version=args.echarts_version)
-    if echarts_js_text is None:
-        # fallback: use external CDN tag in template by setting echarts_js to script tag linking to cdn
-        echarts_js_for_template = f'var _Echarts_CDN = "{cdn_url}";\n/* 页面将在运行时加载外部 echarts 脚本 */\n(function(){{var s=document.createElement("script"); s.src=_Echarts_CDN; s.onload=function(){{/* do nothing */}}; document.head.appendChild(s);}})();'
-    else:
-        echarts_js_for_template = echarts_js_text
-
     # render template
     env = Environment(loader=FileSystemLoader(searchpath="templates"))
     tpl = env.get_template("index_template.html")
     html = tpl.render(
-        echarts_js=echarts_js_for_template,
         latest_date=last_date.strftime("%Y-%m-%d"),
         total_start=float(portfolio_value.iloc[0]),
         total_end=float(portfolio_value.iloc[-1]),
@@ -880,7 +793,7 @@ def main():
         area_chart_id=area_chart.chart_id,
         pie_chart_id=pie_chart.chart_id,
         heatmap_chart_id=heatmap_chart.chart_id,
-        charts_init_js=charts_init_js,
+        charts_options=json.dumps(charts_options),
         table_html=table_html,
         interval_table_html=interval_table_html,
         fund_url_template=args.fund_url_template,
@@ -890,8 +803,6 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("生成完成：", out_path)
-    if cdn_url:
-        print("注意：因为无法下载 echarts.js，生成的页面将依赖外部 CDN：", cdn_url)
 
 
 if __name__ == "__main__":
